@@ -77,18 +77,25 @@ test('the browser release API assembles a packet and rejects invalid input befor
   const sha = 'a'.repeat(40);
   let requests = 0;
   let reviewReads = 0;
+  let reviewMode: 'approved' | 'dismissed' | 'outage' | 'head-drift' = 'approved';
+  let firstHead = sha;
   const client = new GitHub(async input => {
     requests++;
     const path = new URL(String(input)).pathname;
     if (path.endsWith('/reviews')) reviewReads++;
-    if (path.endsWith('/pulls/1/reviews')) return Response.json([
-      { id: 42, state: 'APPROVED', commit_id: sha, submitted_at: '2026-11-22T22:00:00Z', user: { login: 'reviewer' } },
-    ]);
+    if (path.endsWith('/pulls/1/reviews')) {
+      if (reviewMode === 'outage') return new Response(null, { status: 503 });
+      if (reviewMode === 'head-drift') firstHead = 'b'.repeat(40);
+      const state = reviewMode === 'dismissed' ? 'DISMISSED' : 'APPROVED';
+      return Response.json([
+        { id: 42, state, commit_id: sha, submitted_at: '2026-11-22T22:00:00Z', user: { login: 'reviewer' } },
+      ]);
+    }
     if (path.endsWith('/pulls/2/reviews')) return Response.json([]);
     if (/\/pulls\/\d+$/.test(path)) {
       return Response.json({
         title: 'Check release', state: 'open', draft: false, body: '',
-        head: { sha, ref: 'feature' }, base: { ref: 'main' },
+        head: { sha: path.endsWith('/pulls/1') ? firstHead : sha, ref: 'feature' }, base: { ref: 'main' },
       });
     }
     if (path.endsWith('/check-runs')) return Response.json({ check_runs: [] });
@@ -128,9 +135,25 @@ test('the browser release API assembles a packet and rejects invalid input befor
   ]);
   assert.deepEqual(packet.packet.entries[1].snapshot.reviewDecisions.decisions, []);
   assert.equal(reviewReads, 2);
-  const checked = await send('/api/release/recheck', { packet, expectedDigest: packet.digest });
-  assert.equal(checked.status, 200);
-  assert.equal(reviewReads, 2);
-  assert.deepEqual((await checked.json()).entries.map((entry: { recheck: { state: string } }) => entry.recheck.state),
-    ['unchanged', 'unchanged']);
+  const recheck = async () => {
+    const checked = await send('/api/release/recheck', { packet, expectedDigest: packet.digest });
+    assert.equal(checked.status, 200);
+    return (await checked.json()).entries.map((entry: {
+      recheck: { state: string }; branchPolicy: { state: string }; reviewHistory: string;
+    }) => [entry.recheck.state, entry.branchPolicy.state, entry.reviewHistory]);
+  };
+  assert.deepEqual(await recheck(), [['unchanged', 'unchanged', 'unchanged'], ['unchanged', 'unchanged', 'unchanged']]);
+  assert.equal(reviewReads, 4);
+  reviewMode = 'dismissed';
+  assert.deepEqual((await recheck())[0], ['unchanged', 'unchanged', 'changed']);
+  reviewMode = 'outage';
+  assert.deepEqual((await recheck())[0], ['unchanged', 'unchanged', 'unavailable']);
+  reviewMode = 'head-drift';
+  assert.deepEqual((await recheck())[0], ['stale', 'unavailable', 'unavailable']);
+
+  const beforeDifferentHead = reviewReads;
+  const different = await recheck();
+  assert.equal(different[0][0], 'stale');
+  assert.equal(different[0][2], 'different-head');
+  assert.equal(reviewReads, beforeDifferentHead + 1); // Only the other PR still uses the recorded head.
 });

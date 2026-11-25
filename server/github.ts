@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { PullReviewDecisions } from './pull-review-decisions.ts';
 import { manualChecks, reviewIntent, validRepository, revisionState, type Check, type ExportRevision, type PullRevision, type PullSummary, type Requirement, type Review, type Run } from '../src/review.ts';
 
 const shaPattern = /^[a-f0-9]{40}$/;
@@ -137,6 +138,12 @@ export interface BranchCheckPolicy {
 export interface ReleaseRevision extends ExportRevision {
   branchCheckPolicy: BranchCheckPolicy | null;
   branchCheckPolicyIssue: string | null;
+  reviewDecisions?: PullReviewDecisions;
+}
+
+interface ScopedReviewRead {
+  sha: string;
+  load(): Promise<PullReviewDecisions>;
 }
 
 async function branchRequirements(client: GitHub, repo: string, ref: string): Promise<BranchCheckPolicy> {
@@ -251,19 +258,25 @@ async function currentChecks(client: GitHub, repo: string, sha: string) {
   return { checks, checksDigest, checkIssues, evidenceSources: { checkRuns: runs.issue === null, commitStatuses: statuses.issue === null } };
 }
 
-async function loadEvidenceRevision(client: GitHub, repository: string, number: number, includePolicy: boolean): Promise<ReleaseRevision> {
+async function loadEvidenceRevision(
+  client: GitHub, repository: string, number: number, includePolicy: boolean, reviews?: ScopedReviewRead,
+): Promise<ReleaseRevision> {
   const revision = await loadRevision(client, repository, number);
   const repo = repositoryPath(repository);
-  const [{ checksDigest, checkIssues }, policy] = await Promise.all([
+  const [{ checksDigest, checkIssues }, policy, reviewHistory] = await Promise.all([
     currentChecks(client, repo, revision.sha),
     includePolicy ? collect<BranchCheckPolicy | null>(
       branchRequirements(client, repo, revision.baseRef), 'GitHub branch check requirements', null,
     ) : Promise.resolve({ value: null, issue: null }),
+    reviews?.sha === revision.sha
+      ? collect<PullReviewDecisions>(reviews.load(), 'GitHub PR reviews', { state: 'unavailable' })
+      : undefined,
   ]);
   if (revisionState(revision, await loadRevision(client, repository, number)) === 'stale') {
     throw new GitHubError(409, 'The pull request changed while checking evidence. Refresh the review and try again.');
   }
-  return { ...revision, checksDigest, checkIssues, branchCheckPolicy: policy.value, branchCheckPolicyIssue: policy.issue };
+  return { ...revision, checksDigest, checkIssues, branchCheckPolicy: policy.value,
+    branchCheckPolicyIssue: policy.issue, reviewDecisions: reviewHistory?.value };
 }
 
 export async function loadExportRevision(client: GitHub, repository: string, number: number): Promise<ExportRevision> {
@@ -271,8 +284,10 @@ export async function loadExportRevision(client: GitHub, repository: string, num
   return { sha, baseRef, contextDigest, checksDigest, checkIssues };
 }
 
-export function loadReleaseRevision(client: GitHub, repository: string, number: number): Promise<ReleaseRevision> {
-  return loadEvidenceRevision(client, repository, number, true);
+export function loadReleaseRevision(
+  client: GitHub, repository: string, number: number, reviews?: ScopedReviewRead,
+): Promise<ReleaseRevision> {
+  return loadEvidenceRevision(client, repository, number, true, reviews);
 }
 
 export async function loadReview(client: GitHub, repository: string, number: number): Promise<Review> {
