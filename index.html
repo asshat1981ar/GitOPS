@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="Review GitHub pull request evidence and export a handoff.">
+    <link rel="icon" href="data:,">
+    <title>GitOPS Review Inbox</title>
+  </head>
+  <body>
+    <a id="skip-view" class="skip-link" href="#review">Skip to review</a>
+    <header class="topbar">
+      <div class="brand"><span class="wordmark">Review Inbox</span><span class="product">GitOPS</span></div>
+      <nav class="view-switch" aria-label="GitOPS workspace">
+        <button id="show-inbox" type="button" aria-controls="inbox-workspace" aria-pressed="true">PR inbox</button>
+        <button id="show-release" type="button" aria-controls="release-workspace" aria-pressed="false">Release review</button>
+      </nav>
+      <time id="observed"></time>
+    </header>
+    <div class="workspace" id="inbox-workspace">
+      <aside class="sidebar" aria-label="Pull request queue">
+        <label for="repository">Repository</label>
+        <div class="select-wrap">
+          <select id="repository">
+            <option value="asshat1981ar/AutoDev">asshat1981ar/AutoDev</option>
+            <option value="asshat1981ar/GitHubOpsGem">asshat1981ar/GitHubOpsGem</option>
+            <option value="">Open a PR by URL</option>
+          </select>
+          <i class="bi bi-chevron-down" aria-hidden="true"></i>
+        </div>
+        <form id="open-form" hidden>
+          <label for="pr-url">GitHub pull request URL</label>
+          <input id="pr-url" type="url" placeholder="https://github.com/owner/repo/pull/1" required>
+          <button type="submit" class="secondary">Open pull request</button>
+          <p id="open-message" role="alert"></p>
+        </form>
+        <div class="queue-heading">
+          <h2 id="queue-title">Recent pull requests</h2>
+          <button id="reload-queue" class="icon-btn" type="button" aria-label="Refresh pull request queue" title="Refresh queue"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i></button>
+        </div>
+        <p id="queue-message" role="status"></p>
+        <nav id="queue" aria-labelledby="queue-title"></nav>
+      </aside>
+      <main id="review" class="review" tabindex="-1" aria-busy="false">
+        <div id="review-message" role="status"></div>
+        <button id="retry" type="button" class="secondary" hidden>Retry</button>
+        <article id="detail" hidden>
+          <div class="review-heading">
+            <h1 id="title"></h1>
+            <p id="meta"></p>
+          </div>
+          <div id="revision-notice" class="revision-notice" hidden>
+            <p id="revision-message" role="status"></p>
+            <button id="refresh-revision" class="secondary" type="button">Refresh review</button>
+          </div>
+          <section class="panel attention" aria-labelledby="attention-title">
+            <h2 id="attention-title">Needs attention</h2>
+            <div id="attention-items" class="item-list"></div>
+          </section>
+          <section class="panel current" aria-labelledby="check-title">
+            <h2 id="check-title">Current GitHub checks</h2>
+            <p id="check-note" class="muted"></p>
+            <div id="checks" class="item-list"></div>
+          </section>
+          <footer class="handoff">
+            <div class="sources">
+              <a id="origin"></a>
+              <button id="refresh" class="icon-btn" type="button" aria-label="Refresh selected pull request" title="Refresh selected pull request"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i></button>
+            </div>
+            <button id="export" class="primary" type="button">Export handoff</button>
+          </footer>
+          <p id="export-message" role="status"></p>
+          <details class="receipt" id="receipt">
+            <summary>Verify a ForgeCore receipt</summary>
+            <form id="verify-form">
+              <p>Check a signed gate decision for the PR’s repository and branch.</p>
+              <label for="receipt-file">Gate receipt JSON</label>
+              <input id="receipt-file" type="file" accept=".json,application/json" required>
+              <button type="submit" class="secondary">Verify receipt</button>
+            </form>
+            <p id="receipt-result" role="status"></p>
+          </details>
+        </article>
+      </main>
+    </div>
+    <main id="release-workspace" class="release-workspace" tabindex="-1" hidden>
+      <div class="review-heading">
+        <h1>Release review</h1>
+        <p class="muted">Collect evidence across repositories or recheck a packet someone shared.</p>
+      </div>
+      <div class="release-grid">
+        <section class="panel release-form" aria-labelledby="assemble-title">
+          <h2 id="assemble-title">Assemble a packet</h2>
+          <form id="release-collect">
+            <label for="release-name">Release name</label>
+            <input id="release-name" maxlength="120" required placeholder="e.g. November release">
+            <fieldset>
+              <legend>Pull requests</legend>
+              <p class="muted">Use one PR per repository, from two to eight repositories.</p>
+              <div id="release-inputs"></div>
+            </fieldset>
+            <div class="release-actions">
+              <button id="add-release-pr" type="button" class="secondary">Add PR</button>
+              <button id="load-release-pilot" type="button" class="secondary">Use pilot PRs</button>
+            </div>
+            <button class="primary" type="submit">Collect evidence</button>
+          </form>
+        </section>
+        <section class="panel release-form" aria-labelledby="recheck-title">
+          <h2 id="recheck-title">Recheck a packet</h2>
+          <form id="release-recheck">
+            <label for="release-file">Release packet JSON</label>
+            <input id="release-file" type="file" accept=".json,application/json" required>
+            <label for="release-digest">Expected SHA-256 <span class="muted">(optional)</span></label>
+            <input id="release-digest" minlength="64" maxlength="64" pattern="[a-fA-F0-9]{64}" spellcheck="false" autocomplete="off">
+            <p class="muted">Use a digest from a trusted channel if you have one.</p>
+            <button class="secondary" type="submit">Recheck against GitHub</button>
+          </form>
+        </section>
+      </div>
+      <p id="release-status" role="status"></p>
+      <section id="release-result" class="panel" aria-labelledby="release-result-title" hidden>
+        <div class="release-result-heading">
+          <div>
+            <h2 id="release-result-title" tabindex="-1"></h2>
+            <p id="release-result-context" class="muted"></p>
+          </div>
+          <button id="download-release" type="button" class="primary">Download packet</button>
+        </div>
+        <div id="release-coverage"></div>
+        <div id="release-repositories" class="item-list"></div>
+        <details id="release-digest-details" class="receipt">
+          <summary>Packet SHA-256</summary>
+          <code id="release-result-digest"></code>
+        </details>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
