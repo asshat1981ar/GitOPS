@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { GitHub, loadReleaseRevision, loadReview } from './github.ts';
+import { GitHub, loadReview } from './github.ts';
 import { verifyGitHubArtifact } from './artifact-provenance.ts';
-import { loadPullReviewDecisions } from './pull-review-decisions.ts';
+import { loadPullReviewDecisions, loadReleaseRecheck } from './pull-review-decisions.ts';
 import { attachReleaseArtifact, collectReleasePacket, recheckReleasePacket, verifyRecordedReleaseArtifact, verifyReleasePacket } from './release-packet.ts';
 
 const [command, first, ...remaining] = process.argv.slice(2);
@@ -11,7 +11,7 @@ try {
     const client = new GitHub();
     const result = await collectReleasePacket(first, remaining, {
       review: (repository, number) => loadReview(client, repository, number),
-      recheck: (repository, number) => loadReleaseRevision(client, repository, number),
+      recheck: (repository, number) => loadReleaseRecheck(client, repository, number),
       reviewDecisions: (repository, number, sha) => loadPullReviewDecisions(client, repository, number, sha),
     });
     console.log(JSON.stringify(result, null, 2));
@@ -19,9 +19,10 @@ try {
     const client = new GitHub();
     const value: unknown = JSON.parse(await readFile(first, 'utf8'));
     const report = await recheckReleasePacket(value, remaining[0],
-      (repository, number) => loadReleaseRevision(client, repository, number));
+      (repository, number, reviewSha) => loadReleaseRecheck(client, repository, number, reviewSha));
     console.log(JSON.stringify(report, null, 2));
-    if (report.entries.some(entry => entry.recheck.state !== 'unchanged' || entry.branchPolicy.state !== 'unchanged')) process.exitCode = 2;
+    if (report.entries.some(entry => entry.recheck.state !== 'unchanged' || entry.branchPolicy.state !== 'unchanged' ||
+      entry.reviewHistory === 'changed' || entry.reviewHistory === 'unavailable')) process.exitCode = 2;
   } else if ((command === 'attach-artifact' || command === 'verify-artifact') && first && remaining.length >= 2) {
     const [artifact, repository, ...flags] = remaining;
     const options = new Map<string, string>();

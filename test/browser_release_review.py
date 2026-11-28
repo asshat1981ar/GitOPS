@@ -112,6 +112,8 @@ def main():
             row.click()
         assert reviewer.get_by_role("link", name="Approved · reviewer[bot]").get_attribute("href").endswith("/pull/53#pullrequestreview-42")
         assert reviewer.get_by_role("link", name="Dismissed · Unknown reviewer").is_visible()
+        assert reviewer_repo.get_by_text("Live review decisions differ from the packet.", exact=True).is_visible()
+        assert reviewer.get_by_text("Review decision comparison unavailable.", exact=True).is_visible()
         assert reviewer.get_by_text("GitHub PR review history was unavailable during collection.", exact=True).is_visible()
         assert reviewer.evaluate("document.documentElement.scrollWidth === innerWidth")
         entries[0]["snapshot"]["reviewDecisions"]["decisions"] = []
@@ -122,6 +124,7 @@ def main():
             row.click()
         assert reviewer.get_by_text("No submitted decisions for the recorded commit.", exact=True).is_visible()
         assert reviewer.get_by_text("This packet did not collect GitHub PR review history.", exact=True).is_visible()
+        assert reviewer.get_by_text("Review decisions were skipped for this older packet.", exact=True).is_visible()
 
         reviewer.get_by_label("Expected SHA-256", exact=False).fill("0" * 64)
         reviewer.get_by_role("button", name="Recheck against GitHub").click()

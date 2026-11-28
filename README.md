@@ -125,19 +125,23 @@ the source data.
 The online `recheck` command accepts an optional expected digest after the
 filename. It validates the packet, all PR targets, and the recorded check
 fingerprints before using GitHub. It returns a separate JSON report comparing
-the recorded PR revisions, checks, and required-check policy to current
-observations. The original packet stays intact. For the same base branch, the
+the recorded PR revisions, checks, required-check policy, and recorded review
+decisions to current observations. The original packet stays intact. For the same base branch, the
 policy comparison shows added or removed required checks, their GitHub App
 scope, and changes to the up-to-date requirement when GitHub exposed it at
 both observations. Legacy packets can still compare their recorded checks.
-An unrecorded up-to-date requirement remains unavailable. The review history
-display continues to show the packet's capture-time observation after a recheck.
-Linked runs, receipts, release approvals, and other branch rules have separate
-evidence.
+An unrecorded up-to-date requirement remains unavailable. Review recheck
+compares submitted review IDs and decisions on the recorded head, including
+dismissals. Only the saved rows are shown, alongside a separate comparison
+state. A different head, unavailable review evidence, and an older packet
+without review evidence each have their own state. Linked runs, receipts,
+release approvals, and other branch rules have separate evidence.
 
-Exit status `0` means every PR/check and policy comparison matched. Status
-`2` means something changed, was stale, or was unavailable. Status `1`
-means the command or input failed validation.
+Exit status `0` means PR revisions, checks, required-check policies, and any
+recorded review decisions matched. A legacy packet can still exit successfully
+when the comparisons it supports match. Status `2` means compared evidence
+changed, was stale, or was unavailable. Status `1` means the command or input
+failed validation.
 
 ### Attach and verify GitHub build provenance
 

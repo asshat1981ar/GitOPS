@@ -1,4 +1,4 @@
-import { repositoryPath, type GitHub } from './github.ts';
+import { loadReleaseRevision, repositoryPath, type GitHub } from './github.ts';
 
 interface Decision {
   id: number;
@@ -16,6 +16,12 @@ const dateTimePattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function loadReleaseRecheck(client: GitHub, repository: string, number: number, reviewSha?: string) {
+  return loadReleaseRevision(client, repository, number, reviewSha ? {
+    sha: reviewSha, load: () => loadPullReviewDecisions(client, repository, number, reviewSha),
+  } : undefined);
 }
 
 export async function loadPullReviewDecisions(

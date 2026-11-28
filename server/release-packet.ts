@@ -6,11 +6,18 @@ import { digestCurrentChecks, GitHubError, type BranchCheckPolicy, type ReleaseR
 import { matchesGitHubArtifactScope, type ArtifactScope, type VerifiedGitHubArtifact } from './artifact-provenance.ts';
 import type { PullReviewDecisions } from './pull-review-decisions.ts';
 
-type ReleaseObservation = ExportRevision & Partial<Pick<ReleaseRevision, 'branchCheckPolicy' | 'branchCheckPolicyIssue'>>;
+type ReleaseObservation = ExportRevision &
+  Partial<Pick<ReleaseRevision, 'branchCheckPolicy' | 'branchCheckPolicyIssue' | 'reviewDecisions'>>;
+type ReviewHistoryRecheck = 'unchanged' | 'changed' | 'unavailable' | 'different-head' | 'not-recorded';
+
+interface RecordedEvidence extends EvidenceFingerprint {
+  policy: BranchCheckPolicy | null;
+  reviewDecisions?: PullReviewDecisions;
+}
 
 interface ReviewSource {
   review(repository: string, number: number): Promise<Review>;
-  recheck(repository: string, number: number): Promise<ReleaseObservation>;
+  recheck(repository: string, number: number, reviewSha?: string): Promise<ReleaseObservation>;
   reviewDecisions?(repository: string, number: number, sha: string): Promise<PullReviewDecisions>;
 }
 
@@ -320,7 +327,7 @@ function validCheck(value: unknown, sha: string): value is Check {
     (value.url === null || typeof value.url === 'string');
 }
 
-function validReviewHistory(value: unknown): boolean {
+function validReviewHistory(value: unknown): value is PullReviewDecisions {
   if (!record(value)) return false;
   if (value.state === 'unavailable') return true;
   if (value.state !== 'observed' || typeof value.observedAt !== 'string' ||
@@ -336,7 +343,7 @@ function validReviewHistory(value: unknown): boolean {
   return true;
 }
 
-function recordedEvidence(snapshot: unknown): (EvidenceFingerprint & { policy: BranchCheckPolicy | null }) | null {
+function recordedEvidence(snapshot: unknown): RecordedEvidence | null {
   if (snapshot === null) return null;
   if (!record(snapshot) || !record(snapshot.revision)) {
     throw new Error('Packet contains an invalid PR snapshot.');
@@ -353,7 +360,8 @@ function recordedEvidence(snapshot: unknown): (EvidenceFingerprint & { policy: B
       !sha256.test(checksDigest) || digestCurrentChecks(checks) !== checksDigest)) {
     throw new Error('Recorded check digest does not match the recorded check observations.');
   }
-  if (snapshot.reviewDecisions !== undefined && !validReviewHistory(snapshot.reviewDecisions)) {
+  const { reviewDecisions } = snapshot;
+  if (reviewDecisions !== undefined && !validReviewHistory(reviewDecisions)) {
     throw new Error('Packet contains invalid GitHub PR review history.');
   }
   const requirements = snapshot.branchRequirementsObserved;
@@ -364,7 +372,22 @@ function recordedEvidence(snapshot: unknown): (EvidenceFingerprint & { policy: B
       (strict != null && typeof strict !== 'boolean')) {
     throw new Error('Packet contains invalid required-check policy.');
   }
-  return { revision: { sha, baseRef, contextDigest }, checksDigest, policy: observedPolicy(requirements ?? null, strict) };
+  return { revision: { sha, baseRef, contextDigest }, checksDigest,
+    policy: observedPolicy(requirements ?? null, strict), reviewDecisions };
+}
+
+function compareReviewHistory(
+  recorded: RecordedEvidence | null, current: ReleaseObservation | null,
+): ReviewHistoryRecheck {
+  if (!recorded?.reviewDecisions) return 'not-recorded';
+  const saved = recorded.reviewDecisions;
+  if (saved.state === 'unavailable' || !current) return 'unavailable';
+  if (recorded.revision.sha !== current.sha) return 'different-head';
+  const observed = current.reviewDecisions;
+  if (observed?.state !== 'observed') return 'unavailable';
+  const states = new Map(observed.decisions.map(decision => [decision.id, decision.state]));
+  return saved.decisions.length === states.size && saved.decisions.every(decision => states.get(decision.id) === decision.state)
+    ? 'unchanged' : 'changed';
 }
 
 export async function recheckReleasePacket(
@@ -389,18 +412,26 @@ export async function recheckReleasePacket(
     return { ...target, url: entry.url, captureState, recorded: recordedEvidence(entry.snapshot) };
   });
   const startedAt = now().toISOString();
-  const entries = await Promise.all(targets.map(async entry => {
-    if (!entry.recorded) {
-      return { ...entry, current: null, branchPolicy: policyUnavailable('No PR snapshot was recorded.'),
+  const entries = await Promise.all(targets.map(async ({ recorded, ...entry }) => {
+    if (!recorded) {
+      return { ...entry, recorded, current: null, reviewHistory: compareReviewHistory(null, null),
+        branchPolicy: policyUnavailable('No PR snapshot was recorded.'),
         recheck: { state: 'unavailable', at: null, detail: 'No PR snapshot was recorded.' } as Recheck };
     }
+    const savedReview = recorded.reviewDecisions;
+    const fingerprint = { revision: recorded.revision, checksDigest: recorded.checksDigest, policy: recorded.policy };
+    const reviewSha = savedReview?.state === 'observed' ? recorded.revision.sha : undefined;
     try {
-      const current = await recheck(entry.repository, entry.number);
-      return { ...entry, current, recheck: compareEvidence(entry.recorded, current, now().toISOString()),
-        branchPolicy: comparePolicy(entry.recorded.revision.baseRef, entry.recorded.policy, current) };
+      const observation = await recheck(entry.repository, entry.number, reviewSha);
+      const { reviewDecisions: _reviewDecisions, ...current } = observation;
+      return { ...entry, recorded: fingerprint, current, recheck: compareEvidence(recorded, current, now().toISOString()),
+        branchPolicy: comparePolicy(recorded.revision.baseRef, recorded.policy, current),
+        reviewHistory: compareReviewHistory(recorded, observation) };
     } catch (error) {
-      return { ...entry, current: null, recheck: attemptFailed(error, now().toISOString(), 'PR or check recheck unavailable.'),
-        branchPolicy: policyUnavailable('Required-check policy could not be rechecked for this revision.') };
+      return { ...entry, recorded: fingerprint, current: null,
+        recheck: attemptFailed(error, now().toISOString(), 'PR or check recheck unavailable.'),
+        branchPolicy: policyUnavailable('Required-check policy could not be rechecked for this revision.'),
+        reviewHistory: compareReviewHistory(recorded, null) };
     }
   }));
   return { packetDigest: envelope.digest, startedAt, finishedAt: now().toISOString(), entries };

@@ -54,7 +54,49 @@ test('records exact-head decision history before rechecking and keeps failed rea
   assert.ok(!JSON.stringify(report).includes('reviewDecisions'));
   const legacy = await collectReleasePacket('Legacy', urls, source, clock);
   assert.ok(!('reviewDecisions' in legacy.packet.entries[0].snapshot!));
-  await recheckReleasePacket(legacy, legacy.digest, source.recheck, clock);
+  const legacyReport = await recheckReleasePacket(legacy, legacy.digest, async (_repo, _number, reviewSha) => {
+    assert.equal(reviewSha, undefined);
+    return source.recheck();
+  }, clock);
+  assert.deepEqual(legacyReport.entries.map(entry => entry.reviewHistory), ['not-recorded', 'not-recorded']);
+});
+
+test('compares review IDs and states only on the recorded head', async () => {
+  const { recheckReleasePacket } = await import('../server/release-packet.ts');
+  const first = { id: 42, login: 'saved-login', state: 'APPROVED', submittedAt: time } as const;
+  const second = { ...first, id: 44, state: 'CHANGES_REQUESTED' } as const;
+  const saved = await collectReleasePacket('Review history', urls, {
+    ...source,
+    reviewDecisions: async () => ({ state: 'observed', observedAt: time, decisions: [first, second] }),
+  }, clock);
+  const original = JSON.stringify(saved);
+  const matching = {
+    ...revision, checksDigest, checkIssues: [],
+    reviewDecisions: {
+      state: 'observed' as const, observedAt: '2026-11-23T00:00:00.000Z',
+      decisions: [second, { ...first, login: 'new-login', submittedAt: '2026-11-23T00:00:00.000Z' }],
+    },
+  };
+  const cases = [
+    { expected: 'unchanged', revisionResult: matching },
+    { expected: 'changed', revisionResult: { ...matching, reviewDecisions: {
+      ...matching.reviewDecisions, decisions: [second, { ...first, state: 'DISMISSED' as const }],
+    } } },
+    { expected: 'changed', revisionResult: { ...matching, reviewDecisions: { ...matching.reviewDecisions, decisions: [first] } } },
+    { expected: 'different-head', revisionResult: { ...matching, sha: 'b'.repeat(40) } },
+    { expected: 'unavailable', revisionResult: { ...matching, reviewDecisions: { state: 'unavailable' as const } } },
+  ];
+  for (const { expected, revisionResult } of cases) {
+    const report = await recheckReleasePacket(saved, saved.digest, async (_repo, _number, reviewSha) => {
+      assert.equal(reviewSha, sha);
+      return revisionResult;
+    }, clock);
+    assert.deepEqual(report.entries.map(entry => entry.reviewHistory), [expected, expected]);
+    assert.deepEqual(report.entries.map(entry => entry.recheck.state),
+      Array(2).fill(expected === 'different-head' ? 'stale' : 'unchanged'));
+    assert.doesNotMatch(JSON.stringify(report), /saved-login|new-login|reviewDecisions/);
+  }
+  assert.equal(JSON.stringify(saved), original);
 });
 
 test('compiles two distinct repositories in stable order and validates the recorded digest', async () => {

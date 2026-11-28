@@ -1,8 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { collectReleasePacket, recheckReleasePacket } from './release-packet.ts';
 import { ForgeCore } from './forgecore.ts';
-import { loadPullReviewDecisions } from './pull-review-decisions.ts';
-import { GitHubError, loadQueue, loadReview, loadRevision, loadExportRevision, loadReleaseRevision, receiptScope, type GitHub } from './github.ts';
+import { loadPullReviewDecisions, loadReleaseRecheck } from './pull-review-decisions.ts';
+import { GitHubError, loadQueue, loadReview, loadRevision, loadExportRevision, receiptScope, type GitHub } from './github.ts';
 
 const receiptLimit = 64 * 1024;
 const releaseRequestLimit = 2 * 1024 * 1024;
@@ -38,7 +38,8 @@ async function handleReleaseRequest(request: IncomingMessage, client: GitHub, co
   }
   const body = await safeRequestBody(request, releaseRequestLimit, 'release request');
   if (!isRecord(body)) throw new GitHubError(400, 'Enter valid release information.');
-  const recheck = (repository: string, number: number) => loadReleaseRevision(client, repository, number);
+  const recheck = (repository: string, number: number, reviewSha?: string) =>
+    loadReleaseRecheck(client, repository, number, reviewSha);
   try {
     if (collect) {
       const { name, urls } = body;

@@ -156,9 +156,17 @@ function timestamp(label: string, value: unknown): HTMLParagraphElement | null {
   return paragraph;
 }
 
-function renderReviewHistory(entry: ReleaseEntry): HTMLElement {
+function renderReviewHistory(entry: ReleaseEntry, comparison?: Report['entries'][number]['reviewHistory']): HTMLElement {
   const section = node('section', '');
   section.append(node('h3', 'GitHub PR review history'));
+  const labels = {
+    unchanged: 'Live review decisions match the packet.',
+    changed: 'Live review decisions differ from the packet.',
+    unavailable: 'Review decision comparison unavailable.',
+    'different-head': 'The PR head changed. Review decisions were skipped.',
+    'not-recorded': 'Review decisions were skipped for this older packet.',
+  };
+  if (comparison) section.append(node('p', labels[comparison]));
   const history = entry.snapshot?.reviewDecisions;
   if (!history) {
     section.append(node('p', 'This packet did not collect GitHub PR review history.'));
@@ -243,7 +251,7 @@ function renderEntry(entry: ReleaseEntry, checked?: Report['entries'][number]): 
     list.append(...gaps.map(gap => node('li', gap)));
     content.append(list);
   }
-  if (entry.snapshot) content.append(renderReviewHistory(entry));
+  if (entry.snapshot) content.append(renderReviewHistory(entry, checked?.reviewHistory));
   content.append(link);
   row.append(summary, content);
   return row;
@@ -253,7 +261,7 @@ function renderPacket(packet: Packet, report?: Report): void {
   activePacket = packet;
   resultTitle.textContent = typeof packet.packet.name === 'string' ? packet.packet.name : 'Release packet';
   element('release-result-context').textContent = report
-    ? 'Live comparison of GitHub PR revisions, checks, and required-check policy.'
+    ? 'Live comparison of GitHub PR revisions, checks, required-check policy, and recorded review decisions.'
     : 'GitHub PR revisions, checks, and required-check policy rechecked during capture.';
   element('release-result-digest').textContent = packet.digest;
   const coverage = element('release-coverage');
@@ -326,7 +334,10 @@ recheckForm.addEventListener('submit', event => {
     const report = await post<Report>('recheck', { packet, expectedDigest: digest || undefined });
     const matches = report.entries.filter(entry => entry.recheck.state === 'unchanged').length;
     const policies = report.entries.filter(entry => entry.branchPolicy?.state === 'unchanged').length;
-    status.textContent = `PR revisions and checks matched for ${matches} of ${report.entries.length} repositories. Required-check policy matched for ${policies} of ${report.entries.length} repositories.`;
+    const reviewDifferences = report.entries.filter(entry =>
+      entry.reviewHistory === 'changed' || entry.reviewHistory === 'unavailable').length;
+    const reviewSummary = reviewDifferences ? ` Review decision comparisons need attention in ${reviewDifferences} repositories.` : '';
+    status.textContent = `PR revisions and checks matched for ${matches} of ${report.entries.length} repositories. Required-check policy matched for ${policies} of ${report.entries.length} repositories.${reviewSummary}`;
     renderPacket(packet, report);
   });
 });
